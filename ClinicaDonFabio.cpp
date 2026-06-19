@@ -3,7 +3,7 @@
    Equipo Azul: "Turnos en la clinica de Don Fabio"
 
    Sistema de gestion de turnos para la consulta de Don Fabio. Permite:
-     a) Registrar pacientes (nombre, edad, nivel de urgencia).
+     a) Registrar pacientes (nombre, edad, nivel de prioridad).
      b) Cola de atencion priorizada (primero el mas urgente).
      c) Historial de pacientes atendidos en una lista enlazada.
      d) Pila de citas canceladas para poder reactivarlas.
@@ -26,8 +26,8 @@ using namespace std;
 const string LINEA  = string(50, '-');
 const string DLINEA = string(50, '=');
 
-// Etiquetas de urgencia (arreglo estatico). 1=Urgente, 2=Por turno
-const string ETIQUETA_URGENCIA[3] = {"", "Urgente", "Por turno"};
+// Etiquetas de prioridad (arreglo estatico). 1=Urgente, 2=Por turno
+const string ETIQUETA_PRIORIDAD[3] = {"", "Urgente", "Por turno"};
 
 // =================================================================
 //  FUNCIONES AUXILIARES
@@ -151,7 +151,7 @@ public:
     int    id;            // identificador fijo / numero de turno
     string nombre;
     int    edad;
-    int    urgencia;      // 1 Urgente, 2 Por turno
+    int    prioridad;      // 1 Urgente, 2 Por turno
     int    ordenAtencion; // orden cronologico en que fue atendido
     string fechaAtencion;
     Paciente* sig;
@@ -161,7 +161,7 @@ public:
         id = identificador;
         nombre = nom;
         edad = ed;
-        urgencia = urg;
+        prioridad = urg;
         ordenAtencion = 0;
         fechaAtencion = "";
         sig = nullptr;
@@ -170,44 +170,76 @@ public:
 
 // =================================================================
 //  IMPRESION DE TABLAS (formato compartido por todas las vistas)
-//  Columnas alineadas con cout.width()/left. Si conFecha es true se
-//  agrega la columna "Atendido".
+//  Calcula el ancho de la columna del nombre e imprime encabezado,
+//  filas y cierre. Columnas alineadas con cout.width()/left; con
+//  conFecha se agrega la columna "Atendido".
 // =================================================================
-void imprimirEncabezado(bool conFecha)
+
+// Recorta un texto a un ancho dado, terminando en "..." si se pasa. Sirve
+// como tope de seguridad para un nombre desmedido; en uso normal no recorta.
+string ajustarAncho(string texto, int ancho)
 {
-    string linea = string(conFecha ? 70 : 50, '-');
+    if ((int)texto.length() <= ancho) return texto;
+    return texto.substr(0, ancho - 3) + "...";
+}
+
+// Ajusta el ancho de la columna del nombre al nombre mas largo (con un minimo
+// y un tope) para que se vean completos sin descuadrar la tabla.
+int anchoNombre(Paciente* inicio)
+{
+    int maximo = 12;
+    for (Paciente* p = inicio; p != nullptr; p = p->sig)
+        if ((int)p->nombre.length() > maximo) maximo = (int)p->nombre.length();
+    if (maximo > 40) maximo = 40;
+    return maximo + 2;
+}
+
+int anchoNombre(Paciente** arr, int n)
+{
+    int maximo = 12;
+    for (int i = 0; i < n; i++)
+        if ((int)arr[i]->nombre.length() > maximo) maximo = (int)arr[i]->nombre.length();
+    if (maximo > 40) maximo = 40;
+    return maximo + 2;
+}
+
+void imprimirEncabezado(bool conFecha, int anchoNom)
+{
+    int largo = 7 + anchoNom + 7 + 11 + (conFecha ? 16 : 0);
+    string linea = string(largo, '-');
     cout << " " << linea << endl;
     cout << " " << left;
-    cout.width(7);  cout << "Turno";
-    cout.width(22); cout << "Nombre";
-    cout.width(7);  cout << "Edad";
-    cout.width(11); cout << "Urgencia";
+    cout.width(7);        cout << "Turno";
+    cout.width(anchoNom); cout << "Nombre";
+    cout.width(7);        cout << "Edad";
+    cout.width(11);       cout << "Prioridad";
     if (conFecha) cout << "Atendido";
     cout << endl;
     cout << " " << linea << endl;
 }
 
-void imprimirFila(Paciente* p, bool conFecha)
+void imprimirFila(Paciente* p, bool conFecha, int anchoNom)
 {
     cout << " " << left;
-    cout.width(7);  cout << ("#" + to_string(p->id));
-    cout.width(22); cout << p->nombre;
-    cout.width(7);  cout << p->edad;
-    cout.width(11); cout << ETIQUETA_URGENCIA[p->urgencia];
+    cout.width(7);        cout << ("#" + to_string(p->id));
+    cout.width(anchoNom); cout << ajustarAncho(p->nombre, anchoNom - 2);
+    cout.width(7);        cout << p->edad;
+    cout.width(11);       cout << ETIQUETA_PRIORIDAD[p->prioridad];
     if (conFecha) cout << p->fechaAtencion;
     cout << endl;
 }
 
-void imprimirCierre(bool conFecha, string etiqueta, int total)
+void imprimirCierre(bool conFecha, string etiqueta, int total, int anchoNom)
 {
-    string linea = string(conFecha ? 70 : 50, '-');
+    int largo = 7 + anchoNom + 7 + 11 + (conFecha ? 16 : 0);
+    string linea = string(largo, '-');
     cout << " " << linea << endl;
     cout << " " << etiqueta << ": " << total << endl;
 }
 
 // =================================================================
 //  COLA DE ATENCION PRIORIZADA
-//  Lista enlazada ordenada por urgencia: los Urgentes van primero y
+//  Lista enlazada ordenada por prioridad: los Urgentes van primero y
 //  el resto por orden de llegada (turno). Dentro de cada grupo se
 //  respeta el orden en que llegaron.
 // =================================================================
@@ -225,13 +257,13 @@ public:
     Paciente* getInicio() { return frente; }
     Paciente* siguienteAAtender() { return frente; } // el siguiente, sin sacarlo
 
-    // Inserta segun la urgencia: los Urgentes (1) quedan delante de los de
-    // turno (2). Con igual urgencia, se respeta el orden de llegada.
-    void encolar(int id, string nombre, int edad, int urgencia)
+    // Inserta segun la prioridad: los Urgentes (1) quedan delante de los de
+    // turno (2). Con igual prioridad, se respeta el orden de llegada.
+    void encolar(int id, string nombre, int edad, int prioridad)
     {
-        Paciente* nuevo = new Paciente(id, nombre, edad, urgencia);
+        Paciente* nuevo = new Paciente(id, nombre, edad, prioridad);
 
-        if (frente == nullptr || urgencia < frente->urgencia)
+        if (frente == nullptr || prioridad < frente->prioridad)
         {
             nuevo->sig = frente;
             frente = nuevo;
@@ -239,7 +271,7 @@ public:
         else
         {
             Paciente* actual = frente;
-            while (actual->sig != nullptr && actual->sig->urgencia <= urgencia)
+            while (actual->sig != nullptr && actual->sig->prioridad <= prioridad)
                 actual = actual->sig;
             nuevo->sig = actual->sig;
             actual->sig = nuevo;
@@ -300,10 +332,11 @@ public:
             cout << " No hay pacientes en espera." << endl;
             return;
         }
-        imprimirEncabezado(false);
+        int an = anchoNombre(frente);
+        imprimirEncabezado(false, an);
         for (Paciente* p = frente; p != nullptr; p = p->sig)
-            imprimirFila(p, false);
-        imprimirCierre(false, "Pacientes en espera", total);
+            imprimirFila(p, false, an);
+        imprimirCierre(false, "Pacientes en espera", total, an);
     }
 
     ~ColaPrioridad()
@@ -366,14 +399,15 @@ public:
             cout << " Aun no hay pacientes atendidos." << endl;
             return;
         }
-        imprimirEncabezado(true);
+        int an = anchoNombre(cabeza);
+        imprimirEncabezado(true, an);
         Paciente* actual = cabeza;
         while (actual != nullptr)
         {
-            imprimirFila(actual, true);
+            imprimirFila(actual, true, an);
             actual = actual->sig;
         }
-        imprimirCierre(true, "Total de pacientes atendidos", total);
+        imprimirCierre(true, "Total de pacientes atendidos", total, an);
     }
 
     // Copia los punteros a un arreglo dinamico para ordenarlos sin tocar la lista.
@@ -488,14 +522,15 @@ public:
             cout << " No hay citas canceladas." << endl;
             return;
         }
-        imprimirEncabezado(false);
+        int an = anchoNombre(tope);
+        imprimirEncabezado(false, an);
         Paciente* actual = tope;
         while (actual != nullptr)
         {
-            imprimirFila(actual, false);
+            imprimirFila(actual, false, an);
             actual = actual->sig;
         }
-        imprimirCierre(false, "Citas canceladas", total);
+        imprimirCierre(false, "Citas canceladas", total, an);
     }
 
     ~PilaCancelados()
@@ -578,13 +613,14 @@ private:
 
         if (n > 1)
         {
-            string sep = string(50, '-');
+            int an = anchoNombre(coincide, n);
+            string sep = string(16 + an, '-');
             cout << "\n Hay " << n << " coincidencias:" << endl;
             cout << " " << sep << endl;
             cout << " " << left;
             cout.width(5);  cout << "No.";
             cout.width(7);  cout << "Turno";
-            cout.width(22); cout << "Nombre";
+            cout.width(an); cout << "Nombre";
             cout << "Edad" << endl;
             cout << " " << sep << endl;
             for (int i = 0; i < n; i++)
@@ -592,7 +628,7 @@ private:
                 cout << " " << left;
                 cout.width(5);  cout << (to_string(i + 1) + ".");
                 cout.width(7);  cout << ("#" + to_string(coincide[i]->id));
-                cout.width(22); cout << coincide[i]->nombre;
+                cout.width(an); cout << ajustarAncho(coincide[i]->nombre, an - 2);
                 cout << coincide[i]->edad << endl;
             }
             cout << " " << sep << endl;
@@ -676,18 +712,18 @@ public:
                 cout << " Ingrese una edad valida (1 a 120)." << endl;
         } while (edad <= 0 || edad > 120);
 
-        int urgencia;
+        int prioridad;
         do
         {
-            urgencia = leerEntero(" Nivel de urgencia (1=Urgente, 2=Por turno): ");
-            if (urgencia == -1) { cout << " Registro cancelado." << endl; return; }
-            if (urgencia < 1 || urgencia > 2)
+            prioridad = leerEntero(" Nivel de prioridad (1=Urgente, 2=Por turno): ");
+            if (prioridad == -1) { cout << " Registro cancelado." << endl; return; }
+            if (prioridad < 1 || prioridad > 2)
                 cout << " Opcion invalida. Use 1 o 2." << endl;
-        } while (urgencia < 1 || urgencia > 2);
+        } while (prioridad < 1 || prioridad > 2);
 
-        cola.encolar(siguienteId, nombre, edad, urgencia);
+        cola.encolar(siguienteId, nombre, edad, prioridad);
         cout << "\n Paciente registrado con el turno #" << siguienteId
-             << " (Urgencia: " << ETIQUETA_URGENCIA[urgencia] << ")." << endl;
+             << " (Prioridad: " << ETIQUETA_PRIORIDAD[prioridad] << ")." << endl;
         siguienteId++;
     }
 
@@ -707,7 +743,7 @@ public:
         Paciente* siguiente = cola.siguienteAAtender();
         cout << "\n El siguiente en ser atendido es: #" << siguiente->id
              << " " << siguiente->nombre
-             << " (Urgencia: " << ETIQUETA_URGENCIA[siguiente->urgencia] << ")." << endl;
+             << " (Prioridad: " << ETIQUETA_PRIORIDAD[siguiente->prioridad] << ")." << endl;
 
         if (!confirmar(" Confirmar atencion? (s/n): "))
         {
@@ -722,7 +758,7 @@ public:
         historial.agregar(p);
 
         cout << "\n Atendiendo a " << p->nombre
-             << " (Urgencia: " << ETIQUETA_URGENCIA[p->urgencia] << ")." << endl;
+             << " (Prioridad: " << ETIQUETA_PRIORIDAD[p->prioridad] << ")." << endl;
         cout << " Registrado en el historial el " << p->fechaAtencion << "." << endl;
     }
 
@@ -781,7 +817,7 @@ public:
         if (id == -1) return;
 
         Paciente* p = cancelados.removerPorId(id);
-        cola.encolar(p->id, p->nombre, p->edad, p->urgencia);
+        cola.encolar(p->id, p->nombre, p->edad, p->prioridad);
         cout << "\n Cita de " << p->nombre
              << " reactivada y enviada de nuevo a la cola." << endl;
         delete p;
@@ -830,13 +866,14 @@ public:
 
         if (m > 1)
         {
-            string sep = string(60, '-');
+            int an = anchoNombre(encontrados, m);
+            string sep = string(28 + an, '-');
             cout << "\n Se encontraron " << m << " coincidencias:" << endl;
             cout << " " << sep << endl;
             cout << " " << left;
             cout.width(5);  cout << "No.";
             cout.width(7);  cout << "Turno";
-            cout.width(22); cout << "Nombre";
+            cout.width(an); cout << "Nombre";
             cout.width(7);  cout << "Edad";
             cout << "Estado" << endl;
             cout << " " << sep << endl;
@@ -845,7 +882,7 @@ public:
                 cout << " " << left;
                 cout.width(5);  cout << (to_string(i + 1) + ".");
                 cout.width(7);  cout << ("#" + to_string(encontrados[i]->id));
-                cout.width(22); cout << encontrados[i]->nombre;
+                cout.width(an); cout << ajustarAncho(encontrados[i]->nombre, an - 2);
                 cout.width(7);  cout << encontrados[i]->edad;
                 cout << estados[i] << endl;
             }
@@ -873,7 +910,7 @@ public:
         cout << "   Turno    : #" << p->id << endl;
         cout << "   Nombre   : " << p->nombre << endl;
         cout << "   Edad     : " << p->edad << " anios" << endl;
-        cout << "   Urgencia : " << ETIQUETA_URGENCIA[p->urgencia] << endl;
+        cout << "   Prioridad : " << ETIQUETA_PRIORIDAD[p->prioridad] << endl;
         cout << "   Estado   : " << estados[elegido] << endl;
         if (estados[elegido] == "Atendido")
             cout << "   Atendido : " << p->fechaAtencion << endl;
@@ -907,10 +944,11 @@ public:
         insertionSort(arr, n, criterio);
 
         cout << "\n Historial ordenado:" << endl;
-        imprimirEncabezado(true);
+        int an = anchoNombre(arr, n);
+        imprimirEncabezado(true, an);
         for (int i = 0; i < n; i++)
-            imprimirFila(arr[i], true);
-        imprimirCierre(true, "Total de pacientes atendidos", n);
+            imprimirFila(arr[i], true, an);
+        imprimirCierre(true, "Total de pacientes atendidos", n, an);
 
         delete[] arr;   // se libera el arreglo, no los pacientes
     }
@@ -961,11 +999,11 @@ public:
     // Carga unos pacientes de ejemplo para poder probar de una vez.
     void cargarDatosPrueba()
     {
-        cola.encolar(siguienteId++, "Juan Gomez",  45, 1);  // Urgente
-        cola.encolar(siguienteId++, "Rosa Mena",   38, 1);  // Urgente
-        cola.encolar(siguienteId++, "Maria Perez", 72, 2);  // Por turno
-        cola.encolar(siguienteId++, "Pedro Luna",  65, 2);  // Por turno
-        cola.encolar(siguienteId++, "Ana Diaz",    30, 2);  // Por turno
+        cola.encolar(siguienteId++, "Juan Gomez Perez",            45, 1);  // Urgente
+        cola.encolar(siguienteId++, "Rosa Mena Castillo",          38, 1);  // Urgente
+        cola.encolar(siguienteId++, "Maria Perez Santana",         72, 2);  // Por turno
+        cola.encolar(siguienteId++, "Pedro Luna Reyes",            65, 2);  // Por turno
+        cola.encolar(siguienteId++, "Ana Mercedes Diaz Fernandez", 30, 2);  // Por turno
     }
 };
 
